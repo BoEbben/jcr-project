@@ -678,7 +678,7 @@ input[type=file]{display:none}
   <div class="login-body">
     <div class="login-err" id="login-err">Incorrect username or PIN. Please try again.</div>
     <label class="login-label" for="login-user">Username</label>
-    <input class="login-input" id="login-user" type="text" placeholder="e.g. bo.ebben" autocomplete="username" autocapitalize="none" spellcheck="false">
+    <input class="login-input" id="login-user" type="text" placeholder="first.last" autocomplete="username" autocapitalize="none" spellcheck="false">
     <label class="login-label" for="login-pin">PIN</label>
     <input class="login-input" id="login-pin" type="password" placeholder="4-digit PIN" inputmode="numeric" maxlength="4" autocomplete="current-password">
     <button class="login-btn" id="login-btn" onclick="doLogin()">
@@ -1731,11 +1731,15 @@ function renderPage(page) {
     if (!photoGroups.length || photoGroups.every(g => !g.photos.length)) {
       pc.innerHTML = `<div class="card"><div class="empty"><svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg><p>No photos for this project yet</p><span>Photos sync from Autodesk Docs</span></div></div>`;
     } else {
-      pc.innerHTML = photoGroups.map(g => `
+      pc.innerHTML = photoGroups.map(g => {
+        const uploaders = [...new Set(g.photos.map(p => p.by).filter(Boolean))];
+        const credit = uploaders.length ? (uploaders.length === 1 ? uploaders[0] : uploaders[0] + ' +' + (uploaders.length - 1)) : '';
+        return `
         <div style="margin-bottom:16px">
-          <div class="sec-title">${g.date} · ${g.count} photos · Ben Borrayo</div>
+          <div class="sec-title">${g.date} · ${g.count} photo${g.count!==1?'s':''}${credit ? ' · ' + credit : ''}</div>
           <div class="photo-grid-2">${g.photos.map(ph => photoCardHtml(ph, g.date)).join('')}</div>
-        </div>`).join('');
+        </div>`;
+      }).join('');
     }
   }
 
@@ -3179,15 +3183,30 @@ function backToProjectMenu() {
 }
 
 // ── AUTH ──────────────────────────────────────────────────────────────
+// Testing phase: all crew get full access (projects:'all') so they can
+// exercise every function, same as Bo. Scope down to assigned jobs later.
 const USERS = {
   'bo.ebben':    {pin:'1234', name:'Bo Ebben',       initials:'BE', role:'Sr. Field Operations Manager', color:'#565455', projects:'all'},
   'xander.waits':{pin:'2345', name:'Xander Waits',   initials:'XW', role:'Project Manager', color:'#3D3A3B', projects:'all'},
-  'corey.onustock':{pin:'3456',name:'Corey Onustock',initials:'CO', role:'Carpenter',       color:'#2E7D46', projects:['260101']},
-  'joe.morris':  {pin:'4567', name:'Joe Morris',     initials:'JM', role:'Lead Foreman',    color:'#231F20', projects:['260101']},
-  'ben.borrayo': {pin:'5678', name:'Ben Borrayo',    initials:'BB', role:'Foreman',         color:'#D1232A', projects:['260101']},
-  'chantale.huang':{pin:'6789',name:'Chantale Huang',initials:'CH', role:'Project Manager', color:'#565455', projects:['260103']},
+  'corey.onustock':{pin:'3456',name:'Corey Onustock',initials:'CO', role:'Carpenter',       color:'#2E7D46', projects:'all'},
+  'joe.morris':  {pin:'4567', name:'Joe Morris',     initials:'JM', role:'Lead Foreman',    color:'#231F20', projects:'all'},
+  'ben.borrayo': {pin:'5678', name:'Ben Borrayo',    initials:'BB', role:'Foreman',         color:'#D1232A', projects:'all'},
+  'chantale.huang':{pin:'6789',name:'Chantale Huang',initials:'CH', role:'Project Manager', color:'#565455', projects:'all'},
   'craig.ohanlon':{pin:'7890',name:"Craig O'Hanlon",initials:'CO', role:'Administrator',   color:'#565455', projects:'all'},
 };
+
+// Persistent PIN overrides (per device). Lets each crew member change
+// their temp PIN on their own phone and have it stick across reloads.
+function loadPinOverrides() {
+  try { return JSON.parse(localStorage.getItem('jcr_pins') || '{}'); } catch(e) { return {}; }
+}
+function savePinOverride(username, pin) {
+  try { const o = loadPinOverrides(); o[username] = pin; localStorage.setItem('jcr_pins', JSON.stringify(o)); } catch(e) {}
+}
+function getPin(username) {
+  const o = loadPinOverrides();
+  return (o[username] != null) ? o[username] : (USERS[username] ? USERS[username].pin : null);
+}
 
 let currentUser = null;
 
@@ -3208,7 +3227,7 @@ function doLogin() {
   }
 
   const match = USERS[user];
-  if (!match || match.pin !== pin) {
+  if (!match || getPin(user) !== pin) {
     err.textContent = 'Incorrect username or PIN. Please try again.';
     err.classList.add('show');
     document.getElementById('login-user').classList.add('err');
@@ -3378,9 +3397,8 @@ function saveNewPin() {
 
   if (!currentUser) { showErr('You must be signed in to change your PIN.'); return; }
 
-  // Validate current PIN
-  const stored = USERS[currentUser.username];
-  if (!stored || stored.pin !== current) {
+  // Validate current PIN (against any saved override, then the temp PIN)
+  if (getPin(currentUser.username) !== current) {
     showErr('Current PIN is incorrect.', ['pin-current']);
     document.getElementById('pin-current').value = '';
     document.getElementById('pin-current').focus();
@@ -3406,7 +3424,8 @@ function saveNewPin() {
     return;
   }
 
-  // ✅ All good — update PIN
+  // ✅ All good — persist the new PIN (survives reloads on this device)
+  savePinOverride(currentUser.username, newPin);
   USERS[currentUser.username].pin = newPin;
 
   // Update session storage
