@@ -508,6 +508,10 @@ input#sw-photo-input{display:none}
 .fab{background:var(--accent);border-radius:var(--r);margin:12px 16px 0;padding:14px;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;border:none;color:#fff;font-size:13px;font-weight:900;width:calc(100% - 32px);font-family:var(--font-display);letter-spacing:var(--ls-wide);text-transform:uppercase}
 .fab:active{background:var(--accent2);transform:scale(.98)}
 .fab svg{width:18px;height:18px;stroke:#fff;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.fab-ghost{background:transparent;border:1.5px solid var(--border2);color:var(--text);margin-top:8px}
+#pg-home .fab.fab-ghost{box-shadow:none}
+.fab-ghost svg{stroke:var(--text)}
+.fab-ghost:active{background:rgba(255,255,255,.06);transform:scale(.98)}
 
 /* REPORT ITEMS */
 .ritem{display:flex;align-items:flex-start;gap:11px;padding:12px 14px;border-bottom:0.5px solid var(--border);cursor:pointer}
@@ -1064,6 +1068,11 @@ input[type=file]{display:none}
       <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       File daily report
     </button>
+    <button class="fab fab-ghost" onclick="document.getElementById('quick-photo-input').click()">
+      <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      Add photo
+    </button>
+    <input type="file" id="quick-photo-input" accept="image/*" multiple capture="environment" onchange="handleQuickPhoto(this)" style="display:none">
     <div class="section">
       <div class="sec-title">Recent reports</div>
       <div class="card" id="home-reports"></div>
@@ -1662,16 +1671,21 @@ function photoCardHtml(ph, dateStr) {
   // Store photo data on the element via a data index to avoid JSON-in-onclick issues
   const idx = (window._photoCache = window._photoCache || []).push(ph) - 1;
   const ds = (dateStr || '').replace(/'/g, '');
-  return `<div class="pcard" onclick="openLightboxByIdx(${idx},'${ds}')">
-    <div class="pcard-thumb" style="background:${ph.color||'#2B2728'}">
-      <div class="pcard-thumb-icon">
+  const thumbInner = ph.url
+    ? `<img class="pcard-img" data-name="${ph.n}" src="${ph.url}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
+       <div class="pcard-thumb-date">${dateLabel}</div>`
+    : `<div class="pcard-thumb-icon">
         <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
       </div>
       <div class="pcard-thumb-date">${dateLabel}</div>
-      <div class="pcard-thumb-num">${shortName}</div>
+      <div class="pcard-thumb-num">${shortName}</div>`;
+  const aiLbl = ph.loading ? '✦ Analyzing…' : '✦ AI desc';
+  return `<div class="pcard" onclick="openLightboxByIdx(${idx},'${ds}')">
+    <div class="pcard-thumb" style="background:${ph.color||'#2B2728'};position:relative;overflow:hidden">
+      ${thumbInner}
     </div>
     <div class="pcard-meta">
-      <div class="ai-lbl">✦ AI desc</div>
+      <div class="ai-lbl">${aiLbl}</div>
       <div class="pcard-desc">${ph.d}</div>
     </div>
   </div>`;
@@ -1935,6 +1949,64 @@ function rmPhoto(i) {
   renderUploadGrid();
   const s = document.getElementById('ph-ai-status');
   if (s) s.textContent = uploadedPhotos.length ? `✦ ${uploadedPhotos.length} photo${uploadedPhotos.length!==1?'s':''} described` : '';
+}
+
+// ── QUICK ADD PHOTO (from project home — no report needed) ─────────────
+function handleQuickPhoto(input) {
+  const files = Array.from(input.files);
+  if (!files.length) return;
+  const proj = PROJECTS.find(x => x.id === activeProj);
+  const projName = proj ? proj.name : 'this project';
+  const who = currentUser ? currentUser.name : 'Field crew';
+  const now = new Date();
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const dateLabel = `${months[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
+  const timeLabel = now.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'});
+
+  if (!PHOTOS[activeProj]) PHOTOS[activeProj] = [];
+  let group = PHOTOS[activeProj].find(g => g.date === dateLabel);
+  if (!group) { group = {date: dateLabel, count: 0, photos: []}; PHOTOS[activeProj].unshift(group); }
+
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const dataUrl = e.target.result;
+      const stamp = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
+      const photo = { n: stamp + '_Photo', url: dataUrl, d: 'Generating description…', by: who, time: timeLabel, color: '#2B2728', loading: true };
+      group.photos.push(photo);
+      group.count = group.photos.length;
+      if (currentPage === 'photos') renderPage('photos');
+      describeQuickPhoto(dataUrl, photo, projName);
+    };
+    reader.readAsDataURL(file);
+  });
+  showToast(`${files.length} photo${files.length!==1?'s':''} added to ${projName}`);
+  input.value = '';
+}
+
+async function describeQuickPhoto(dataUrl, photo, projName) {
+  try {
+    const base64Data = dataUrl.split(',')[1];
+    const mediaType = dataUrl.split(';')[0].split(':')[1] || 'image/jpeg';
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: [
+          { type: 'image', source: {type: 'base64', media_type: mediaType, data: base64Data} },
+          { type: 'text', text: `This photo was taken on a J.C. Richards Construction job site for the project "${projName}". Write a concise 1-2 sentence field documentation description — materials, conditions, work in progress, location details, quality observations. Be specific and factual. No preamble, just the description.` }
+        ]}]
+      })
+    });
+    const data = await response.json();
+    photo.d = (data.content && data.content[0]) ? data.content[0].text : 'Photo documented on site.';
+  } catch (err) {
+    photo.d = 'Photo documented on site.';
+  }
+  photo.loading = false;
+  if (currentPage === 'photos') renderPage('photos');
 }
 
 function submitReport() {
